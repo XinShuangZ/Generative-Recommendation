@@ -465,7 +465,7 @@ class BaselineModel(torch.nn.Module):
         # loss_mask.bool() 会将 1/0 的掩码转为 True/False
         # logits[loss_mask.bool()] 会将所有为 True 位置的 logits 向量展平
         # 假设有 N 个 True 的位置, 结果形状为 [N, 1+B*L]
-        valid_logits = logits[loss_mask.bool()] / self.nce_temp
+        valid_logits = logits[loss_mask.bool()] / 0.07
         
         # 6. 【核心修改】计算每个有效位置的权重
         # 首先，筛选出有效位置对应的 action_type
@@ -474,7 +474,7 @@ class BaselineModel(torch.nn.Module):
         
         # 根据 action_type 生成权重 (点击为1.0, 曝光为alpha)
         # 形状: [N]
-        weights = torch.where(valid_action_types == 1, 1.0, self.action_weight_alpha).to(torch.float32)
+        weights = torch.where(valid_action_types == 1, 1.0, 0.1).to(torch.float32)
 
         # 7. 创建标签 (对于InfoNCE，正样本总是在第一个位置，所以标签是0)
         # 形状: [N]
@@ -491,8 +491,5 @@ class BaselineModel(torch.nn.Module):
         # weights.sum() 是总权重，用总损失除以总权重得到加权平均损失
         # 添加一个很小的 epsilon 防止除以零
         loss = (unweighted_loss * weights).sum() / (weights.sum() + 1e-8)
-        writer.add_scalar("Model/nce_pos_logits_mean", pos_logits[loss_mask.bool()].mean().item())
-        writer.add_scalar("Model/nce_neg_logits_mean", neg_logits[loss_mask.bool()].mean().item())
+
         return loss
-
-
