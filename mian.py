@@ -20,13 +20,13 @@ def get_args():
     # Train params
     parser.add_argument('--batch_size', default=128, type=int)
     parser.add_argument('--lr', default=0.001, type=float)
-    parser.add_argument('--maxlen', default=101, type=int)
-
+    parser.add_argument('--maxlen', default=201, type=int)
+    
     # Baseline Model construction
-    parser.add_argument('--hidden_units', default=32, type=int)
-    parser.add_argument('--num_blocks', default=1, type=int)
-    parser.add_argument('--num_epochs', default=3, type=int)
-    parser.add_argument('--num_heads', default=1, type=int)
+    parser.add_argument('--hidden_units', default=64, type=int)
+    parser.add_argument('--num_blocks', default=4, type=int)
+    parser.add_argument('--num_epochs', default=5, type=int)
+    parser.add_argument('--num_heads', default=4, type=int)
     parser.add_argument('--dropout_rate', default=0.2, type=float)
     parser.add_argument('--l2_emb', default=0.0, type=float)
     parser.add_argument('--device', default='cuda', type=str)
