@@ -95,131 +95,131 @@ class MyDataset(torch.utils.data.Dataset):
         return t
 
 
-def __getitem__(self, uid):
-    """
-    获取单个用户的数据，并进行padding处理，生成模型需要的数据格式。
-    此版本经过改进，能根据序列长度动态决定user token的位置：
-    - 序列过长时，user token被强制放在首位以防丢失。
-    - 序列未超长时，user token保留其在时间上的原始位置。
-
-    Args:
-        uid: 用户ID(reid)
-
-    Returns:
-        seq, pos, neg, token_type, next_token_type, ...
-    """
-    user_sequence = self._load_user_data(uid)
-
-    # 1. 分离用户画像和物品序列，并保留原始记录用于排序
-    user_profile_record = None
-    item_sequence = []
-    # 新增：一个包含所有记录和时间戳的列表，用于短序列场景
-    all_records_with_time = []
-
-    for record_tuple in user_sequence:
-        u, i, user_feat, item_feat, action_type, timestamp = record_tuple
-        
-        # 识别用户画像记录
-        if user_feat is not None and item_feat is None:
-            user_profile_record = (u, user_feat, 2, action_type)
-            all_records_with_time.append((user_profile_record, timestamp))
-        # 识别物品交互记录
-        elif i is not None and item_feat is not None:
-            item_record = (i, item_feat, 1, action_type)
-            item_sequence.append(item_record)
-            all_records_with_time.append((item_record, timestamp))
-
-    # 2. 判断场景并构建 final_sequence
-    final_sequence = []
+    def __getitem__(self, uid):
+        """
+        获取单个用户的数据，并进行padding处理，生成模型需要的数据格式。
+        此版本经过改进，能根据序列长度动态决定user token的位置：
+        - 序列过长时，user token被强制放在首位以防丢失。
+        - 序列未超长时，user token保留其在时间上的原始位置。
     
-    # 计算未截断前的总长度
-    # 如果有用户画像，总元素数是 item 数 + 1
-    original_len = len(item_sequence) + 1 if user_profile_record else len(item_sequence)
-
-    if original_len > self.maxlen + 1:
-        # --- 场景一：长序列，需要截断 ---
-        # 此时，user token 必须保留在最前面
-        print(f"UID {uid}: 长序列场景，执行截断。") # 调试信息
+        Args:
+            uid: 用户ID(reid)
+    
+        Returns:
+            seq, pos, neg, token_type, next_token_type, ...
+        """
+        user_sequence = self._load_user_data(uid)
+    
+        # 1. 分离用户画像和物品序列，并保留原始记录用于排序
+        user_profile_record = None
+        item_sequence = []
+        # 新增：一个包含所有记录和时间戳的列表，用于短序列场景
+        all_records_with_time = []
+    
+        for record_tuple in user_sequence:
+            u, i, user_feat, item_feat, action_type, timestamp = record_tuple
+            
+            # 识别用户画像记录
+            if user_feat is not None and item_feat is None:
+                user_profile_record = (u, user_feat, 2, action_type)
+                all_records_with_time.append((user_profile_record, timestamp))
+            # 识别物品交互记录
+            elif i is not None and item_feat is not None:
+                item_record = (i, item_feat, 1, action_type)
+                item_sequence.append(item_record)
+                all_records_with_time.append((item_record, timestamp))
+    
+        # 2. 判断场景并构建 final_sequence
+        final_sequence = []
         
-        # a. 先把 user token 拿出来
-        if user_profile_record:
-            final_sequence.append(user_profile_record)
-        
-        # b. 从 item 序列中截取最新的部分
-        # 需要留出的位置数，如果user_profile存在则为1，否则为0
-        user_token_space = 1 if user_profile_record else 0
-        num_items_to_keep = (self.maxlen + 1) - user_token_space
-        
-        truncated_items = item_sequence[-num_items_to_keep:]
-        final_sequence.extend(truncated_items)
-
-    else:
-        # --- 场景二：短序列，不需要截断 ---
-        # 此时，user token 保持其时间顺序
-        print(f"UID {uid}: 短序列场景，保持时间顺序。") # 调试信息
-        
-        # a. 按时间戳对所有记录进行排序（假设时间戳越大越新）
-        all_records_with_time.sort(key=lambda x: x[1])
-        
-        # b. 提取排序后的记录作为最终序列
-        final_sequence = [record for record, timestamp in all_records_with_time]
-
-    # 边界条件检查: 如果最终序列元素少于2，无法构成训练对
-    if len(final_sequence) < 2:
-        # 返回一个全零的伪数据，避免在DataLoader中报错
-        # (这部分代码可以复用上一版修改的)
-        # ... (省略返回空数据的代码，和上一版相同) ...
-        # 为了简洁，这里直接返回None，你需要在DataLoader中处理None值
-        return None 
-
-    # 3. 初始化Numpy数组 (与原来相同)
-    seq = np.zeros([self.maxlen + 1], dtype=np.int32)
-    pos = np.zeros([self.maxlen + 1], dtype=np.int32)
-    # ... (省略所有numpy数组的初始化，和原来完全相同) ...
-    neg = np.zeros([self.maxlen + 1], dtype=np.int32)
-    token_type = np.zeros([self.maxlen + 1], dtype=np.int32)
-    next_token_type = np.zeros([self.maxlen + 1], dtype=np.int32)
-    next_action_type = np.zeros([self.maxlen + 1], dtype=np.int32)
-    seq_feat = np.empty([self.maxlen + 1], dtype=object)
-    pos_feat = np.empty([self.maxlen + 1], dtype=object)
-    neg_feat = np.empty([self.maxlen + 1], dtype=object)
-
-
-    # 4. 准备负采样和填充 (与原来相同)
-    ts = {record[0] for record in final_sequence if record[2] == 1 and record[0]}
-    nxt = final_sequence[-1]
-    idx = self.maxlen
-
-    for record_tuple in reversed(final_sequence[:-1]):
-        i, feat, type_, act_type = record_tuple
-        next_i, next_feat, next_type, next_act_type = nxt
-        feat = self.fill_missing_feat(feat, i)
-        next_feat = self.fill_missing_feat(next_feat, next_i)
-        seq[idx] = i
-        token_type[idx] = type_
-        next_token_type[idx] = next_type
-        if next_act_type is not None:
-            next_action_type[idx] = next_act_type
-        seq_feat[idx] = feat
-        if next_type == 1 and next_i != 0:
-            pos[idx] = next_i
-            pos_feat[idx] = next_feat
-            neg_id = self._random_neq(1, self.itemnum + 1, ts)
-            neg[idx] = neg_id
-            neg_item_feat = self.item_feat_dict.get(str(neg_id), {})
-            neg_feat[idx] = self.fill_missing_feat(neg_item_feat, neg_id)
-        nxt = record_tuple
-        idx -= 1
-        if idx < 0:
-            break
-
-    # 5. 填充Numpy数组中剩余的None值 (与原来相同)
-    default_val = self.feature_default_value
-    seq_feat = np.array([x if x is not None else default_val for x in seq_feat])
-    pos_feat = np.array([x if x is not None else default_val for x in pos_feat])
-    neg_feat = np.array([x if x is not None else default_val for x in neg_feat])
-
-    return seq, pos, neg, token_type, next_token_type, next_action_type, seq_feat, pos_feat, neg_feat
+        # 计算未截断前的总长度
+        # 如果有用户画像，总元素数是 item 数 + 1
+        original_len = len(item_sequence) + 1 if user_profile_record else len(item_sequence)
+    
+        if original_len > self.maxlen + 1:
+            # --- 场景一：长序列，需要截断 ---
+            # 此时，user token 必须保留在最前面
+            print(f"UID {uid}: 长序列场景，执行截断。") # 调试信息
+            
+            # a. 先把 user token 拿出来
+            if user_profile_record:
+                final_sequence.append(user_profile_record)
+            
+            # b. 从 item 序列中截取最新的部分
+            # 需要留出的位置数，如果user_profile存在则为1，否则为0
+            user_token_space = 1 if user_profile_record else 0
+            num_items_to_keep = (self.maxlen + 1) - user_token_space
+            
+            truncated_items = item_sequence[-num_items_to_keep:]
+            final_sequence.extend(truncated_items)
+    
+        else:
+            # --- 场景二：短序列，不需要截断 ---
+            # 此时，user token 保持其时间顺序
+            print(f"UID {uid}: 短序列场景，保持时间顺序。") # 调试信息
+            
+            # a. 按时间戳对所有记录进行排序（假设时间戳越大越新）
+            all_records_with_time.sort(key=lambda x: x[1])
+            
+            # b. 提取排序后的记录作为最终序列
+            final_sequence = [record for record, timestamp in all_records_with_time]
+    
+        # 边界条件检查: 如果最终序列元素少于2，无法构成训练对
+        if len(final_sequence) < 2:
+            # 返回一个全零的伪数据，避免在DataLoader中报错
+            # (这部分代码可以复用上一版修改的)
+            # ... (省略返回空数据的代码，和上一版相同) ...
+            # 为了简洁，这里直接返回None，你需要在DataLoader中处理None值
+            return None 
+    
+        # 3. 初始化Numpy数组 (与原来相同)
+        seq = np.zeros([self.maxlen + 1], dtype=np.int32)
+        pos = np.zeros([self.maxlen + 1], dtype=np.int32)
+        # ... (省略所有numpy数组的初始化，和原来完全相同) ...
+        neg = np.zeros([self.maxlen + 1], dtype=np.int32)
+        token_type = np.zeros([self.maxlen + 1], dtype=np.int32)
+        next_token_type = np.zeros([self.maxlen + 1], dtype=np.int32)
+        next_action_type = np.zeros([self.maxlen + 1], dtype=np.int32)
+        seq_feat = np.empty([self.maxlen + 1], dtype=object)
+        pos_feat = np.empty([self.maxlen + 1], dtype=object)
+        neg_feat = np.empty([self.maxlen + 1], dtype=object)
+    
+    
+        # 4. 准备负采样和填充 (与原来相同)
+        ts = {record[0] for record in final_sequence if record[2] == 1 and record[0]}
+        nxt = final_sequence[-1]
+        idx = self.maxlen
+    
+        for record_tuple in reversed(final_sequence[:-1]):
+            i, feat, type_, act_type = record_tuple
+            next_i, next_feat, next_type, next_act_type = nxt
+            feat = self.fill_missing_feat(feat, i)
+            next_feat = self.fill_missing_feat(next_feat, next_i)
+            seq[idx] = i
+            token_type[idx] = type_
+            next_token_type[idx] = next_type
+            if next_act_type is not None:
+                next_action_type[idx] = next_act_type
+            seq_feat[idx] = feat
+            if next_type == 1 and next_i != 0:
+                pos[idx] = next_i
+                pos_feat[idx] = next_feat
+                neg_id = self._random_neq(1, self.itemnum + 1, ts)
+                neg[idx] = neg_id
+                neg_item_feat = self.item_feat_dict.get(str(neg_id), {})
+                neg_feat[idx] = self.fill_missing_feat(neg_item_feat, neg_id)
+            nxt = record_tuple
+            idx -= 1
+            if idx < 0:
+                break
+    
+        # 5. 填充Numpy数组中剩余的None值 (与原来相同)
+        default_val = self.feature_default_value
+        seq_feat = np.array([x if x is not None else default_val for x in seq_feat])
+        pos_feat = np.array([x if x is not None else default_val for x in pos_feat])
+        neg_feat = np.array([x if x is not None else default_val for x in neg_feat])
+    
+        return seq, pos, neg, token_type, next_token_type, next_action_type, seq_feat, pos_feat, neg_feat
 
 
     def __len__(self):
