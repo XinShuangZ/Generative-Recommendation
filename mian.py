@@ -20,12 +20,12 @@ def get_args():
     # Train params
     parser.add_argument('--batch_size', default=128, type=int)
     parser.add_argument('--lr', default=0.001, type=float)
-    parser.add_argument('--maxlen', default=201, type=int)
-    
+    parser.add_argument('--maxlen', default=101, type=int)
+
     # Baseline Model construction
     parser.add_argument('--hidden_units', default=64, type=int)
     parser.add_argument('--num_blocks', default=4, type=int)
-    parser.add_argument('--num_epochs', default=5, type=int)
+    parser.add_argument('--num_epochs', default=6, type=int)
     parser.add_argument('--num_heads', default=4, type=int)
     parser.add_argument('--dropout_rate', default=0.2, type=float)
     parser.add_argument('--l2_emb', default=0.0, type=float)
@@ -34,12 +34,30 @@ def get_args():
     parser.add_argument('--state_dict_path', default=None, type=str)
     parser.add_argument('--norm_first', action='store_true')
 
+    parser.add_argument('--mha_bias', default=True, type=bool)
+    parser.add_argument('--ffn_bias', default=True, type=bool)
+    parser.add_argument('--score_func', default="sigmoid", type=str)
     # MMemb Feature ID
     parser.add_argument('--mm_emb_id', nargs='+', default=['81'], type=str, choices=[str(s) for s in range(81, 87)])
+
+    # Warm up training parameters
+    parser.add_argument('--warmup_steps', default=6300, type=int, help='Warm up steps')
+    parser.add_argument('--warmup_lr', default=0.0001, type=float, help='Initial learning rate for warm up')
+
+    #params for clk samples loss_boost
+    parser.add_argument('--click_weight', default=5.0, type=float, help='weight for clk samples')
+
+    #params for in batch loss
+    parser.add_argument('--in_batch_pos_sample_n', default=0, type=int, help='number of in batch pos samples')
+    parser.add_argument('--in_batch_neg_sample_n', default=None, type=int, help='number of in batch neg samples')
+    parser.add_argument('--use_cos_similarity', default=True, type=bool, help='use cosine similarity for recall')
     
-    # nce loss params
-    parser.add_argument('--action_weight_alpha', default=0.1, type=float)
-    parser.add_argument('--nce_temp', default=0.07, type=float)
+    parser.add_argument('--norm_method', default='rms', type=str, choices=['rms', 'layer'])
+    parser.add_argument('--temperature', default=0.07, type=float)
+    
+    #triple loss
+    parser.add_argument('--Triple_Loss_lambda', default=0.2, type=float)
+    parser.add_argument('--margin', default=0.6, type=float)
     
     args = parser.parse_args()
 
