@@ -144,25 +144,8 @@ class MoE(nn.Module):
         x = x.view(-1, self.dim)
         weights, indices = self.gate(x)
         y = torch.zeros_like(x)
-        T = x.size(0)  # 总token数 (batch_size * seq_len)
-        expert_counts = torch.zeros(self.n_routed_experts, device=x.device)  # f_i
-        expert_probs = torch.zeros(self.n_routed_experts, device=x.device)   # P_i
-        counts = torch.bincount(indices.flatten(), minlength=self.n_routed_experts)
-        for expert_idx in range(self.n_routed_experts):
-            if counts[expert_idx] == 0:
-                continue
-            expert = self.experts[expert_idx]
-            sample_indices, weight_indices = torch.where(indices == expert_idx)
-            expert_output = expert(x[sample_indices])
-            current_weights = weights[sample_indices, weight_indices].unsqueeze(1)
-            y[sample_indices] += expert_output * weights[sample_indices, weight_indices].unsqueeze(1)
-            expert_counts[expert_idx] = sample_indices.size(0)
-            expert_probs[expert_idx] = current_weights.sum()
-        f_i = (self.n_routed_experts * expert_counts) / (self.n_activated_experts * T)
-        P_i = expert_probs / T
-        L_ExpBal = (f_i * P_i).sum()
         z = self.shared_experts(x)
-        return (y + z).view(original_shape), L_ExpBal
+        return (y + z).view(original_shape)
 
 class BaselineModel(torch.nn.Module):
     """
