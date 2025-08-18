@@ -29,7 +29,7 @@ def get_args():
     parser.add_argument('--hidden_units', default=64, type=int)
     parser.add_argument('--num_blocks', default=4, type=int)
     parser.add_argument('--num_epochs', default=6, type=int)
-    parser.add_argument('--num_heads', default=8, type=int)
+    parser.add_argument('--num_heads', default=4, type=int)
     parser.add_argument('--dropout_rate', default=0.2, type=float)
     parser.add_argument('--l2_emb', default=0.0, type=float)
     parser.add_argument('--device', default='cuda', type=str)
@@ -172,6 +172,9 @@ if __name__ == '__main__':
 
             loss.backward()
             
+            if args.use_grad_clip:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+                
             optimizer.step()
             scheduler.step()  # 更新学习率
                         
@@ -208,11 +211,11 @@ if __name__ == '__main__':
                 neg = neg.to(args.device)
 
                 '''前向传播'''
-                pos_logits, neg_logits = model(
+                pos_logits, neg_logits, action_types = model(
                     seq, pos, neg, token_type, next_token_type, next_action_type, seq_feat, pos_feat, neg_feat
                 )
                 '''主体损失（InfoNCE损失）'''
-                loss = model.compute_infonce_loss(pos_logits, neg_logits)
+                loss = model.compute_infonce_loss_weighted(pos_logits, neg_logits, action_types)
 
                 # 记录验证集指标
                 valid_loss_sum += loss.item()
