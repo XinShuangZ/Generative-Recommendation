@@ -275,22 +275,9 @@ if __name__ == '__main__':
         valid_loss_sum /= len(valid_loader)
         writer.add_scalar('Loss/valid', valid_loss_sum, global_step)
 
-        # =================== 模型保存修改 ===================
-        # 为了能够完整地恢复训练，最好将所有参数都保存下来
         save_dir = Path(os.environ.get('TRAIN_CKPT_PATH'), f"global_step{global_step}.valid_loss={valid_loss_sum:.4f}")
         save_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 将所有 state_dict 打包到一个字典中
-        state_to_save = {
-            'model': model.state_dict(),
-            'item_emb': item_emb.state_dict(),
-            'user_emb': user_emb.state_dict(),
-            'sparse_emb': sparse_emb.state_dict(),
-            'emb_transform': emb_transform.state_dict(),
-            'optimizer': optimizer.state_dict() # 保存优化器状态也很重要
-        }
-        torch.save(state_to_save, save_dir / "checkpoint.pt")
-        # =====================================================
+        torch.save(model.state_dict(), save_dir / "model.pt")
 
     print("Done")
     writer.close()
