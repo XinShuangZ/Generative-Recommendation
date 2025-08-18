@@ -131,21 +131,35 @@ class MoE(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.dim = args.hidden_units
-        self.n_routed_experts = args.n_routed_experts  # 专家总数
-        self.n_activated_experts = args.n_activated_experts  # 每个输入激活的专家数
+        self.n_routed_experts = args.n_routed_experts 
+        self.n_activated_experts = args.n_activated_experts   
         self.gate = Gate(args)
         self.experts = nn.ModuleList([
             Expert(args.hidden_units, args.moe_inter_dim, args.ffn_bias) 
             for _ in range(self.n_routed_experts)
         ])
         self.shared_experts = MLP(args.hidden_units, args.n_shared_experts * args.moe_inter_dim)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        original_shape = x.size()
-        x = x.view(-1, self.dim)
-        weights, indices = self.gate(x)
-        y = torch.zeros_like(x)
-        z = self.shared_experts(x)
-        return (y + z).view(original_shape)
+        original_shape = x.shape
+        x = x.view(-1, self.dim) 
+        gate_weights, expert_indices = self.gate(x)
+        final_output = torch.zeros_like(x)
+        flat_x = x.repeat_interleave(self.n_activated_experts, dim=0)
+        flat_weights = gate_weights.flatten()
+        expert_outputs = []
+        for i in range(self.n_routed_experts):
+            idx = torch.where(expert_indices.flatten() == i)[0]
+            if idx.numel() > 0:
+                expert_outputs.append(self.experts[i](flat_x[idx]))
+        expert_outputs = torch.cat(expert_outputs, dim=0)
+        scatter_indices = expert_indices.flatten().argsort().argsort()
+        final_output.index_add_(0, 
+                                torch.arange(x.size(0), device=x.device).repeat_interleave(self.n_activated_experts), 
+                                expert_outputs[scatter_indices] * flat_weights.unsqueeze(1))
+        z = self.shared_experts(x)  
+        final_output += z
+        return final_output.view(original_shape)
 
 class BaselineModel(torch.nn.Module):
     """
@@ -407,19 +421,15 @@ class BaselineModel(torch.nn.Module):
             seq_feature: 序列特征list，每个元素为当前时刻的特征字典
             pos_feature: 正样本特征list，每个元素为当前时刻的特征字典
             neg_feature: 负样本特征list，每个元素为当前时刻的特征字典
-        Returns:
-            返回两组logits：
-                1. 用于InfoNCE loss的logits（正样本 vs 全局负样本）
-                2. 用于Triplet loss的logits（点击得分 vs 曝光得分）
         """
         log_feats = self.log2feats(user_item, mask, seq_feature)  
         pos_embs = self.feat2emb(pos_seqs, pos_feature, include_user=False)
         neg_embs = self.feat2emb(neg_seqs, neg_feature, include_user=False)
 
         if self.use_cos_similarity:
-            log_feats = F.normalize(log_feats, p=2, dim=-1, eps=1e-8)
-            pos_embs = F.normalize(pos_embs, p=2, dim=-1, eps=1e-8)
-            neg_embs = F.normalize(neg_embs, p=2, dim=-1, eps=1e-8)
+            log_feats = F.normalize(log_feats, p=2, dim=-1, eps=1e-8) #[B,L,D]
+            pos_embs = F.normalize(pos_embs, p=2, dim=-1, eps=1e-8) #[B,L,D]
+            neg_embs = F.normalize(neg_embs, p=2, dim=-1, eps=1e-8) #[B,L,D]
 
         hidden_size = neg_embs.size(-1)
         pos_logits_for_infonce = (log_feats * pos_embs).sum(dim=-1, keepdim=True)
@@ -430,16 +440,13 @@ class BaselineModel(torch.nn.Module):
         loss_mask_bool = loss_mask.bool()
         final_pos_logits = pos_logits_for_infonce[loss_mask_bool]
         final_neg_logits = neg_logits_for_infonce[loss_mask_bool]
-        final_action_types = next_action_type[loss_mask_bool]
-
-        # # --- 准备 Triplet Loss 所需的数据 ---
-        # interaction_scores = (log_feats * pos_embs).sum(dim=-1)
-        # click_mask = loss_mask_bool & (next_action_type == 1)
-        # expose_mask = loss_mask_bool & (next_action_type == 0)
-        # clicked_scores = interaction_scores[click_mask]
-        # exposed_scores = interaction_scores[expose_mask]
+                
+        action_type_tensor = next_action_type.to(self.dev)
+        if action_type_tensor.shape != loss_mask_bool.shape:
+            action_type_tensor = action_type_tensor.reshape(loss_mask_bool.shape)
+        final_action_types = action_type_tensor[loss_mask_bool]
         
-        return log_feats, final_pos_logits, final_neg_logits, final_action_types 
+        return final_pos_logits, final_neg_logits, final_action_types 
 
     def predict(self, log_seqs, seq_feature, mask):
         """
@@ -484,19 +491,19 @@ class BaselineModel(torch.nn.Module):
         save_emb(final_embs, Path(save_path, 'embedding.fbin'))
         save_emb(final_ids, Path(save_path, 'id.u64bin'))
     
-    def compute_infonce_loss(self, pos_logits, neg_logits):
-        logits = torch.cat([pos_logits, neg_logits], dim=-1) / self.temperature
-        labels = torch.zeros(logits.size(0), device=logits.device, dtype=torch.int64)
-        infonce_loss = F.cross_entropy(logits, labels)
-        return infonce_loss
+    # def compute_infonce_loss(self, pos_logits, neg_logits):
+    #     logits = torch.cat([pos_logits, neg_logits], dim=-1) / self.temperature
+    #     labels = torch.zeros(logits.size(0), device=logits.device, dtype=torch.int64)
+    #     infonce_loss = F.cross_entropy(logits, labels)
+    #     return infonce_loss
     
-    # def compute_triple_loss(self, pos_logits, neg_logits):
-    #     delta_pctr = neg_logits.mean(dim=-1) - pos_logits.squeeze(-1)  
-    #     loss_terms = torch.clamp(delta_pctr + self.args.margin, min=0) 
-    #     triple_loss = self.args.Triple_Loss_lambda * loss_terms.mean()
-    #     return triple_loss
+    def compute_triple_loss(self, pos_logits, neg_logits):
+        delta_pctr = neg_logits.mean(dim=-1) - pos_logits.squeeze(-1)  
+        loss_terms = torch.clamp(delta_pctr + self.args.margin, min=0) 
+        triple_loss = self.args.Triple_Loss_lambda * loss_terms.mean()
+        return triple_loss
     
-    def compute_infonce_loss_weighted(self, pos_logits, neg_logits, action_types, click_weight=2, expose_weight=1):
+    def compute_infonce_loss_weighted(self, pos_logits, neg_logits, action_types, click_weight=4, expose_weight=1):
         """
         计算加权的InfoNCE loss。
         点击行为产生的损失会被赋予更高的权重。
@@ -560,5 +567,3 @@ class BaselineModel(torch.nn.Module):
     #         loss_terms = torch.clamp(delta + self.args.margin, min=0)
     #         triple_loss = self.args.Triple_Loss_lambda * loss_terms.mean()
     #     return triple_loss
-
-
