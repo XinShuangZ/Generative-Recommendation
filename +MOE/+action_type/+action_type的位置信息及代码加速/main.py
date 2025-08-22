@@ -142,10 +142,6 @@ if __name__ == '__main__':
     # 计算总步数用于学习率调度
     total_steps = len(train_loader) * args.num_epochs
     scheduler = get_lr_scheduler(optimizer, args.warmup_steps, total_steps)
-    
-    
-    scaler = amp.GradScaler() if args.use_amp and torch.cuda.is_available() else None
-    amp_dtype = torch.float16 if args.amp_dtype == 'float16' else torch.bfloat16
 
     T = 0.0
     t0 = time.time()
@@ -155,7 +151,7 @@ if __name__ == '__main__':
         model.train()
         if args.inference_only:
             break
-        for step, batch in enumerate(train_loader):
+        for step, batch in tqdm(enumerate(train_loader), total=len(train_loader)):
             seq, pos, neg, token_type, next_token_type, next_action_type, seq_feat, pos_feat, neg_feat = batch
             seq = seq.to(args.device, non_blocking=True)
             pos = pos.to(args.device, non_blocking=True)
@@ -163,46 +159,27 @@ if __name__ == '__main__':
             token_type = token_type.to(args.device, non_blocking=True)
             next_token_type = next_token_type.to(args.device, non_blocking=True)
             next_action_type = next_action_type.to(args.device, non_blocking=True)
-            
             optimizer.zero_grad()
             
-            with amp.autocast(dtype=amp_dtype, enabled=scaler is not None):
-                '''前向传播'''
-                pos_logits, neg_logits, action_types = model(
-                    seq, pos, neg, token_type, next_token_type, next_action_type, seq_feat, pos_feat, neg_feat
-                )
+            '''前向传播'''
+            pos_logits, neg_logits, action_types = model(
+                seq, pos, neg, token_type, next_token_type, next_action_type, seq_feat, pos_feat, neg_feat
+            )
 
-                '''主体损失（InfoNCE损失）'''
-                loss = model.compute_infonce_loss_weighted(pos_logits, neg_logits, action_types)
-                
-                '''三元损失'''
-                if args.Triple_Loss_lambda != 0:
-                    loss += model.compute_triple_loss(pos_logits, neg_logits)
+            '''主体损失（InfoNCE损失）'''
+            loss = model.compute_infonce_loss_weighted(pos_logits, neg_logits, action_types)
+            
+            '''三元损失'''
+            if args.Triple_Loss_lambda != 0:
+                loss += model.compute_triple_loss(pos_logits, neg_logits)
 
-            if scaler is not None:
-                scaler.scale(loss).backward()
-            else:
-                loss.backward()
+            loss.backward()
+            
+            if args.use_grad_clip:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
                 
-            if scaler is not None:
-                if args.use_grad_clip:
-                    scaler.unscale_(optimizer)
-                    grad_norm = torch.nn.utils.clip_grad_norm_(
-                        model.parameters(), 
-                        max_norm=args.grad_clip,  # 剪裁阈值
-                        norm_type=2,  # 使用L2范数
-                    )
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                if args.use_grad_clip:
-                    grad_norm = torch.nn.utils.clip_grad_norm_(
-                        model.parameters(), 
-                        max_norm=args.grad_clip,  # 剪裁阈值
-                        norm_type=2,  # 使用L2范数
-                    )
-                optimizer.step()
-            scheduler.step() 
+            optimizer.step()
+            scheduler.step()  # 更新学习率
                         
             # 记录学习率
             current_lr = scheduler.get_last_lr()[0]
@@ -211,19 +188,17 @@ if __name__ == '__main__':
             # <<< MODIFIED: 添加此行以记录训练损失到TensorBoard
             writer.add_scalar('Train/Loss', loss.item(), global_step)
 
-            if global_step % 50 == 1:
-                current_lr = scheduler.get_last_lr()[0]
-                # writer.add_scalar('Learning_Rate', current_lr, global_step)
-                log_json = json.dumps(
-                    {'global_step': global_step, 
-                    'loss': loss.item(), 
-                    #'loss_adv': loss_adv.item(),
-                    'lr': current_lr,
-                    'epoch': epoch, 
-                    'time': time.time()}
-                )
-                log_file.write(log_json + '\n')
-                log_file.flush()
+            # 日志记录
+            log_json = json.dumps(
+                {'global_step': global_step, 
+                'loss': loss.item(), 
+                'lr': current_lr,
+                'epoch': epoch, 
+                'time': time.time()}
+            )
+            log_file.write(log_json + '\n')
+            log_file.flush()
+            if global_step % 20 == 1:
                 print(log_json)            
             global_step += 1
             
@@ -232,7 +207,7 @@ if __name__ == '__main__':
         model.eval()
         valid_loss_sum = 0
         with torch.no_grad():
-            for step, batch in enumerate(valid_loader):
+            for step, batch in tqdm(enumerate(valid_loader), total=len(valid_loader)):
                 seq, pos, neg, token_type, next_token_type, next_action_type, seq_feat, pos_feat, neg_feat = batch
                 seq = seq.to(args.device, non_blocking=True)
                 pos = pos.to(args.device, non_blocking=True)
@@ -240,7 +215,6 @@ if __name__ == '__main__':
                 token_type = token_type.to(args.device, non_blocking=True)
                 next_token_type = next_token_type.to(args.device, non_blocking=True)
                 next_action_type = next_action_type.to(args.device, non_blocking=True)
-
                 '''前向传播'''
                 pos_logits, neg_logits, action_types = model(
                     seq, pos, neg, token_type, next_token_type, next_action_type, seq_feat, pos_feat, neg_feat
@@ -256,7 +230,7 @@ if __name__ == '__main__':
         valid_loss_avg = valid_loss_sum / len(valid_loader)
         writer.add_scalar('Valid/Loss', valid_loss_avg, global_step)        
 
-        # 权重文件产出，路径和命名符合规范
+ 
         save_dir = Path(os.environ.get('TRAIN_CKPT_PATH'), f"global_step={global_step}.valid_loss={valid_loss_avg:.4f}")
         save_dir.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), save_dir / "model.pt")
