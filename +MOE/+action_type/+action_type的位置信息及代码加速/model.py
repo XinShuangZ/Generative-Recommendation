@@ -4,7 +4,6 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from tqdm import tqdm
-from dataset import save_emb
 
 def my_activation(method='relu'): 
     activation_map = {
@@ -202,6 +201,7 @@ class BaselineModel(torch.nn.Module):
         self.user_emb = torch.nn.Embedding(self.user_num + 1, args.hidden_units, padding_idx=0)
         self.pos_emb = torch.nn.Embedding(2 * args.maxlen + 1, args.hidden_units, padding_idx=0)
         
+        self.use_action_type = args.use_action_type
         if self.use_action_type:
             self.action_type_emb = torch.nn.Embedding(3, args.hidden_units, padding_idx=0)
         
@@ -213,7 +213,7 @@ class BaselineModel(torch.nn.Module):
         self.forward_layernorms = torch.nn.ModuleList()
         self.forward_layers = torch.nn.ModuleList()
         self.use_cos_similarity = args.use_cos_similarity
-        self.use_action_type = args.use_action_type
+        
         self._init_feat_info(feat_statistics, feat_types)
         user_dim = args.hidden_units * (len(self.USER_SPARSE_FEAT) + 1 + len(self.USER_ARRAY_FEAT)) + len(self.USER_CONTINUAL_FEAT)
         
