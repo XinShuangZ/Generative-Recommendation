@@ -67,7 +67,8 @@ def get_args():
     parser.add_argument('--warmup_lr', default=0.0001, type=float, help='Initial learning rate for warm up')
 
     parser.add_argument('--use_cos_similarity', default=True, type=bool, help='use cosine similarity for recall')
-
+    parser.add_argument('--use_action_type', default=True, type=bool)
+    
     #triple loss
     parser.add_argument('--Triple_Loss_lambda', default=0.3, type=float)
     parser.add_argument('--margin', default=0.6, type=float)
