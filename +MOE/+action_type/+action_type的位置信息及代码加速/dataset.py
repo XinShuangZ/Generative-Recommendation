@@ -363,7 +363,6 @@ class MyTestDataset(MyDataset):
         super().__init__(data_dir, args)
 
     def _load_data_and_offsets(self):
-        self.data_file = open(self.data_dir / "predict_seq.jsonl", 'rb')
         with open(Path(self.data_dir, 'predict_seq_offsets.pkl'), 'rb') as f:
             self.seq_offsets = pickle.load(f)
 
@@ -403,7 +402,7 @@ class MyTestDataset(MyDataset):
 
         ext_user_sequence = []
         for record_tuple in user_sequence:
-            u, i, user_feat, item_feat, _, _ = record_tuple
+            u, i, user_feat, item_feat, action_type, _ = record_tuple
             if u:
                 if type(u) == str:  # 如果是字符串，说明是user_id
                     user_id = u
@@ -414,7 +413,7 @@ class MyTestDataset(MyDataset):
                     u = 0
                 if user_feat:
                     user_feat = self._process_cold_start_feat(user_feat)
-                ext_user_sequence.insert(0, (u, user_feat, 2))
+                ext_user_sequence.insert(0, (u, user_feat, 2, action_type))
 
             if i and item_feat:
                 # 序列对于训练时没见过的item，不会直接赋0，而是保留creative_id，creative_id远大于训练时的itemnum
@@ -422,26 +421,36 @@ class MyTestDataset(MyDataset):
                     i = 0
                 if item_feat:
                     item_feat = self._process_cold_start_feat(item_feat)
-                ext_user_sequence.append((i, item_feat, 1))
+                ext_user_sequence.append((i, item_feat, 1, action_type))
 
         seq = np.zeros([self.maxlen + 1], dtype=np.int32)
         token_type = np.zeros([self.maxlen + 1], dtype=np.int32)
+        next_token_type = np.zeros([self.maxlen + 1], dtype=np.int32)
+        next_action_type = np.zeros([self.maxlen + 1], dtype=np.int32)
         seq_feat = np.empty([self.maxlen + 1], dtype=object)
-
+        
+        nxt = ext_user_sequence[-1]
         idx = self.maxlen
+
         for record_tuple in reversed(ext_user_sequence[:-1]):
-            i, feat, type_ = record_tuple
+            i, feat, type_, act_type = record_tuple
+            next_i, next_feat, next_type, next_act_type = nxt
             feat = self.fill_missing_feat(feat, i)
+            next_feat = self.fill_missing_feat(next_feat, next_i)
             seq[idx] = i
             token_type[idx] = type_
+            next_token_type[idx] = next_type
+            if next_act_type is not None:
+                next_action_type[idx] = next_act_type
             seq_feat[idx] = feat
+            nxt = record_tuple
             idx -= 1
             if idx == -1:
                 break
 
         seq_feat = np.where(seq_feat == None, self.feature_default_value, seq_feat)
 
-        return seq, token_type, seq_feat, user_id
+        return seq, token_type, seq_feat, next_token_type, next_action_type, user_id
 
     def __len__(self):
         """
@@ -452,7 +461,7 @@ class MyTestDataset(MyDataset):
             temp = pickle.load(f)
         return len(temp)
 
-    def collate_fn(batch):
+    def collate_fn(self, batch):
         """
         将多个__getitem__返回的数据拼接成一个batch
 
@@ -465,9 +474,30 @@ class MyTestDataset(MyDataset):
             seq_feat: 用户序列特征, list形式
             user_id: user_id, str
         """
-        seq, token_type, seq_feat, user_id = zip(*batch)
+        seq, token_type, seq_feat, next_token_type, next_action_type, user_id = zip(*batch)
+
         seq = torch.from_numpy(np.array(seq))
+
         token_type = torch.from_numpy(np.array(token_type))
-        seq_feat = self.feat2tensor_all(list(seq_feat), include_user=True)
-        
-        return seq, token_type, seq_feat, user_id
+        next_token_type = torch.from_numpy(np.array(next_token_type))
+        next_action_type = torch.from_numpy(np.array(next_action_type))
+
+        seq_feat = self.feat2tensor_all(seq_feat, include_user=True)
+
+        return seq, token_type, seq_feat, next_token_type, next_action_type, user_id
+
+
+def save_emb(emb, save_path):
+    """
+    将Embedding保存为二进制文件
+
+    Args:
+        emb: 要保存的Embedding，形状为 [num_points, num_dimensions]
+        save_path: 保存路径
+    """
+    num_points = emb.shape[0]  # 数据点数量
+    num_dimensions = emb.shape[1]  # 向量的维度
+    print(f'saving {save_path}')
+    with open(Path(save_path), 'wb') as f:
+        f.write(struct.pack('II', num_points, num_dimensions))
+        emb.tofile(f)
