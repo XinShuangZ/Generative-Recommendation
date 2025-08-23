@@ -36,7 +36,7 @@ class MyDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.data_dir = Path(data_dir)
-        self._load_data_and_offsets()
+
         self.maxlen = args.maxlen
         self.dev = args.device
         self.item_feat_dict = json.load(open(Path(data_dir, "item_feat_dict.json"), 'r'))
