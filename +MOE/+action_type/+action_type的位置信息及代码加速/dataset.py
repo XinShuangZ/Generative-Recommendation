@@ -50,18 +50,26 @@ class MyDataset(torch.utils.data.Dataset):
         self.feature_default_value, self.feature_types, self.feat_statistics = self._init_feat_info()
 
     def _load_data_and_offsets(self):
+        """
+        加载用户序列数据和每一行的文件偏移量(预处理好的), 用于快速随机访问数据并I/O
+        """
+        self.data_file = open(self.data_dir / "seq.jsonl", 'rb')
         with open(Path(self.data_dir, 'seq_offsets.pkl'), 'rb') as f:
             self.seq_offsets = pickle.load(f)
 
     def _load_user_data(self, uid):
-        """每次读取时临时打开文件，避免多进程句柄冲突"""
-        file_path = self.data_dir / "seq.jsonl"
-        with open(file_path, 'rb') as f:  
-            f.seek(self.seq_offsets[uid])  
-            line = f.readline()
-            if not line:
-                raise ValueError(f"用户{uid}在{file_path}中无数据")
-            data = json.loads(line)
+        """
+        从数据文件中加载单个用户的数据
+
+        Args:
+            uid: 用户ID(reid)
+
+        Returns:
+            data: 用户序列数据，格式为[(user_id, item_id, user_feat, item_feat, action_type, timestamp)]
+        """
+        self.data_file.seek(self.seq_offsets[uid])
+        line = self.data_file.readline()
+        data = json.loads(line)
         return data
 
     def _random_neq(self, l, r, s):
@@ -363,6 +371,7 @@ class MyTestDataset(MyDataset):
         super().__init__(data_dir, args)
 
     def _load_data_and_offsets(self):
+        self.data_file = open(self.data_dir / "predict_seq.jsonl", 'rb')
         with open(Path(self.data_dir, 'predict_seq_offsets.pkl'), 'rb') as f:
             self.seq_offsets = pickle.load(f)
 
