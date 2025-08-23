@@ -370,11 +370,6 @@ class MyTestDataset(MyDataset):
     def __init__(self, data_dir, args):
         super().__init__(data_dir, args)
 
-    def _load_data_and_offsets(self):
-        self.data_file = open(self.data_dir / "predict_seq.jsonl", 'rb')
-        with open(Path(self.data_dir, 'predict_seq_offsets.pkl'), 'rb') as f:
-            self.seq_offsets = pickle.load(f)
-
     def _process_cold_start_feat(self, feat):
         """
         处理冷启动特征。训练集未出现过的特征value为字符串，默认转换为0.可设计替换为更好的方法。
@@ -407,8 +402,14 @@ class MyTestDataset(MyDataset):
             seq_feat: 用户序列特征，每个元素为字典，key为特征ID，value为特征值
             user_id: user_id eg. user_xxxxxx ,便于后面对照答案
         """
-        user_sequence = self._load_user_data(uid)  # 动态加载用户数据
-
+        
+        self.data_file = open(self.data_dir / "predict_seq.jsonl", 'rb')
+        with open(Path(self.data_dir, 'predict_seq_offsets.pkl'), 'rb') as f:
+            self.seq_offsets = pickle.load(f)
+        self.data_file.seek(self.seq_offsets[uid])
+        line = self.data_file.readline()
+        user_sequence = json.loads(line)
+        
         ext_user_sequence = []
         for record_tuple in user_sequence:
             u, i, user_feat, item_feat, action_type, _ = record_tuple
