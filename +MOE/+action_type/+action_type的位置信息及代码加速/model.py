@@ -418,8 +418,8 @@ class BaselineModel(torch.nn.Module):
         
         return final_pos_logits, final_neg_logits, final_action_types 
 
-    def predict(self, log_seqs, seq_feature, mask):
-        """
+    def predict(self, user_item, seq_feature, mask, next_mask, next_action_type):
+        """seq, seq_feat, token_type, next_token_type, next_action_type
         计算用户序列的表征
         Args:
             log_seqs: 用户序列ID
@@ -428,7 +428,18 @@ class BaselineModel(torch.nn.Module):
         Returns:
             final_feat: 用户序列的表征，形状为 [batch_size, hidden_units]
         """
-        log_feats = self.log2feats(log_seqs, mask, seq_feature)
+        seq_action_types = 0
+        if self.use_action_type:
+            remapped_next_actions = torch.zeros_like(next_action_type, device=self.dev)
+            is_real_next_action = (next_mask != 0)  
+            is_exposure = (next_action_type == 0) & is_real_next_action
+            remapped_next_actions[is_exposure] = 1 
+            is_click = (next_action_type == 1) & is_real_next_action
+            remapped_next_actions[is_click] = 2
+            seq_action_types = torch.zeros_like(user_item, device=self.dev)
+            seq_action_types[:, 1:] = remapped_next_actions[:, :-1]
+        
+        log_feats = self.log2feats(user_item, mask, seq_feature, seq_action_types)
         if self.use_cos_similarity:
             log_feats = F.normalize(log_feats, p=2, dim=-1, eps=1e-8)
         final_feat = log_feats[:, -1, :]
