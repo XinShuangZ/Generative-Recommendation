@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from tqdm import tqdm
+from dataset import save_emb
 
 def my_activation(method='relu'): 
     activation_map = {
