@@ -108,10 +108,7 @@ if __name__ == '__main__':
             seq = seq.to(args.device, non_blocking=True)
             pos = pos.to(args.device, non_blocking=True)
             neg = neg.to(args.device, non_blocking=True)
-            token_type = token_type.to(args.device, non_blocking=True)
-            next_token_type = next_token_type.to(args.device, non_blocking=True)
-            next_action_type = next_action_type.to(args.device, non_blocking=True)
-            
+
             pos_logits, neg_logits = model(
                 seq, pos, neg, token_type, next_token_type, next_action_type, seq_feat, pos_feat, neg_feat
             )
