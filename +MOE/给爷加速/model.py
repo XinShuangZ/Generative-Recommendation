@@ -133,7 +133,6 @@ class BaselineModel(torch.nn.Module):
         itemdim = (
             args.hidden_units * (len(self.ITEM_SPARSE_FEAT) + 1 + len(self.ITEM_ARRAY_FEAT))
             + len(self.ITEM_CONTINUAL_FEAT)
-            + args.hidden_units * len(self.ITEM_EMB_FEAT)
         )
 
         self.userdnn = torch.nn.Linear(userdim, args.hidden_units)
@@ -226,8 +225,8 @@ class BaselineModel(torch.nn.Module):
 
     def feat2emb(self, seq, feature_array, mask=None, include_user=False):
         if include_user:
-            user_mask = (mask == 2)
-            item_mask = (mask == 1)
+            user_mask = (mask == 2).to(self.dev)
+            item_mask = (mask == 1).to(self.dev)
             user_embedding = self.user_emb(user_mask * seq)
             item_embedding = self.item_emb(item_mask * seq)
             item_feat_list = [item_embedding]
@@ -261,24 +260,11 @@ class BaselineModel(torch.nn.Module):
                 elif feat_type.endswith('continual'):
                     feat_list.append(tensor.unsqueeze(2).float())
         
-        for k in self.ITEM_EMB_FEAT:
-            batch_size = len(feature_array)
-            emb_dim = self.ITEM_EMB_FEAT[k]
-            seq_len = len(feature_array[0]) if batch_size > 0 else 0
-            
-            batch_emb_data = np.zeros((batch_size, seq_len, emb_dim), dtype=np.float32)
-            for i, seq in enumerate(feature_array):
-                for j, item in enumerate(seq):
-                    if k in item:
-                        batch_emb_data[i, j] = item[k]
-            tensor_feature = torch.from_numpy(batch_emb_data).to(self.dev)
-            item_feat_list.append(self.emb_transform[k](tensor_feature))
-        
         all_item_emb = torch.cat(item_feat_list, dim=2)
-        all_item_emb = self.item_dnn(all_item_emb)
+        all_item_emb = torch.relu(self.itemdnn(all_item_emb))
         if include_user:
             all_user_emb = torch.cat(user_feat_list, dim=2)
-            all_user_emb = self.user_dnn(all_user_emb)
+            all_user_emb = torch.relu(self.userdnn(all_user_emb))
             seqs_emb = all_item_emb + all_user_emb
         else:
             seqs_emb = all_item_emb
