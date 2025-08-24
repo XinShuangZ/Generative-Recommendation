@@ -376,12 +376,12 @@ class MyTestDataset(MyDataset):
             temp = pickle.load(f)
         return len(temp)
 
-    @staticmethod
-    def collate_fn(batch):
+    
+    def collate_fn(self, batch):
         seq, token_type, seq_feat, user_id = zip(*batch)
         seq = torch.from_numpy(np.array(seq))
         token_type = torch.from_numpy(np.array(token_type))
-        seq_feat = MyDataset.feat2tensor_all(self, seq_feat, include_user=True)
+        seq_feat = self.feat2tensor_all(seq_feat, include_user=True)
 
         return seq, token_type, seq_feat, user_id
 
