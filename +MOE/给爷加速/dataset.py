@@ -230,6 +230,14 @@ class MyDataset(torch.utils.data.Dataset):
                 list(self.mm_emb_dict[feat_id].values())[0].shape[0], dtype=np.float32
             )
 
+        self.USER_SPARSE_FEAT = {k: feat_statistics[k] for k in feat_types['user_sparse']}
+        self.USER_CONTINUAL_FEAT = feat_types['user_continual']
+        self.ITEM_SPARSE_FEAT = {k: feat_statistics[k] for k in feat_types['item_sparse']}
+        self.ITEM_CONTINUAL_FEAT = feat_types['item_continual']
+        self.USER_ARRAY_FEAT = {k: feat_statistics[k] for k in feat_types['user_array']}
+        self.ITEM_ARRAY_FEAT = {k: feat_statistics[k] for k in feat_types['item_array']}
+        EMB_SHAPE_DICT = {"81": 32, "82": 1024, "83": 3584, "84": 4096, "85": 3584, "86": 3584}
+        self.ITEM_EMB_FEAT = {k: EMB_SHAPE_DICT[k] for k in feat_types['item_emb']}  # 记录的是不同多模态特征的维度
         return feat_default_value, feat_types, feat_statistics
 
     def fill_missing_feat(self, feat, item_id):
