@@ -225,21 +225,9 @@ class BaselineModel(torch.nn.Module):
             return torch.from_numpy(batch_data).to(self.dev)
 
     def feat2emb(self, seq, feature_array, mask=None, include_user=False):
-        """
-        Args:
-            seq: 序列ID
-            feature_array: 特征list，每个元素为当前时刻的特征字典
-            mask: 掩码，1表示item，2表示user
-            include_user: 是否处理用户特征，在两种情况下不打开：1) 训练时在转换正负样本的特征时（因为正负样本都是item）;2) 生成候选库item embedding时。
-
-        Returns:
-            seqs_emb: 序列特征的Embedding
-        """
-        seq = seq.to(self.dev)
-        # pre-compute embedding
         if include_user:
-            user_mask = (mask == 2).to(self.dev)
-            item_mask = (mask == 1).to(self.dev)
+            user_mask = (mask == 2)
+            item_mask = (mask == 1)
             user_embedding = self.user_emb(user_mask * seq)
             item_embedding = self.item_emb(item_mask * seq)
             item_feat_list = [item_embedding]
@@ -247,62 +235,50 @@ class BaselineModel(torch.nn.Module):
         else:
             item_embedding = self.item_emb(seq)
             item_feat_list = [item_embedding]
-
-        # batch-process all feature types
+        
         all_feat_types = [
             (self.ITEM_SPARSE_FEAT, 'item_sparse', item_feat_list),
             (self.ITEM_ARRAY_FEAT, 'item_array', item_feat_list),
             (self.ITEM_CONTINUAL_FEAT, 'item_continual', item_feat_list),
         ]
-
         if include_user:
-            all_feat_types.extend(
-                [
-                    (self.USER_SPARSE_FEAT, 'user_sparse', user_feat_list),
-                    (self.USER_ARRAY_FEAT, 'user_array', user_feat_list),
-                    (self.USER_CONTINUAL_FEAT, 'user_continual', user_feat_list),
-                ]
-            )
-
-        # batch-process each feature type
+            all_feat_types.extend([
+                (self.USER_SPARSE_FEAT, 'user_sparse', user_feat_list),
+                (self.USER_ARRAY_FEAT, 'user_array', user_feat_list),
+                (self.USER_CONTINUAL_FEAT, 'user_continual', user_feat_list),
+            ])
+        
         for feat_dict, feat_type, feat_list in all_feat_types:
             if not feat_dict:
                 continue
-
             for k in feat_dict:
-                tensor_feature = feature_array[k].to(self.dev)
-
+                tensor = feature_array[k].to(self.dev)
+                
                 if feat_type.endswith('sparse'):
-                    feat_list.append(self.sparse_emb[k](tensor_feature))
+                    feat_list.append(self.sparse_emb[k](tensor))
                 elif feat_type.endswith('array'):
-                    feat_list.append(self.sparse_emb[k](tensor_feature).sum(2))
+                    feat_list.append(self.sparse_emb[k](tensor).sum(2))  # 数组特征求和
                 elif feat_type.endswith('continual'):
-                    feat_list.append(tensor_feature.unsqueeze(2))
-
+                    feat_list.append(tensor.unsqueeze(2).float())
+        
         for k in self.ITEM_EMB_FEAT:
-            # collect all data to numpy, then batch-convert
             batch_size = len(feature_array)
             emb_dim = self.ITEM_EMB_FEAT[k]
-            seq_len = len(feature_array[0])
-
-            # pre-allocate tensor
+            seq_len = len(feature_array[0]) if batch_size > 0 else 0
+            
             batch_emb_data = np.zeros((batch_size, seq_len, emb_dim), dtype=np.float32)
-
             for i, seq in enumerate(feature_array):
                 for j, item in enumerate(seq):
                     if k in item:
                         batch_emb_data[i, j] = item[k]
-
-            # batch-convert and transfer to GPU
             tensor_feature = torch.from_numpy(batch_emb_data).to(self.dev)
             item_feat_list.append(self.emb_transform[k](tensor_feature))
-
-        # merge features
+        
         all_item_emb = torch.cat(item_feat_list, dim=2)
-        all_item_emb = torch.relu(self.itemdnn(all_item_emb))
+        all_item_emb = self.item_dnn(all_item_emb)
         if include_user:
             all_user_emb = torch.cat(user_feat_list, dim=2)
-            all_user_emb = torch.relu(self.userdnn(all_user_emb))
+            all_user_emb = self.user_dnn(all_user_emb)
             seqs_emb = all_item_emb + all_user_emb
         else:
             seqs_emb = all_item_emb
